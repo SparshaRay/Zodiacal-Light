@@ -1,156 +1,206 @@
 
-''' Libraries _______________________________________'''
+''' Libraries __________________________________________'''
 
-import numpy as np                                  #   Numpy for array handling and manipulation
-import matplotlib.pyplot as plt                     #   Matplotlib for plotting
-from matplotlib.animation import FuncAnimation      #   Animation libraries
+import numpy as np                          # Numpy for array handling and manipulation
+from scipy.stats import truncnorm           # Truncated normal distribution, can be done without scipy too
+import matplotlib.pyplot as plt             # Matplotlib for plotting
+import matplotlib.animation as animation    # Animation libraries
+import mpl_toolkits.axisartist as AA        # For subplots
+from matplotlib.colors import hsv_to_rgb    # For coloring trajectories
 
-''' Params   ________________________________________'''
 
-sunpos  = np.array([0.0, 0.0, 0.0])         # Position of Sun, taken as origin
-marspos = np.array([0.0, 249.2E9, 0.0])     # Position of Mars, at perigee, in km
-marsvel = np.array([26.5E3, 0.0, 0.0])      # Velocity of Mars, at perigee, in ms-1
+''' Initialize subplots ________________________________'''
 
-marsmass = 6.39E23              # Mass of mars in kg
-sunmass  = 1.989E30             # Mass of sun in kg
-timestep = 1000                 # Timestep, in seconds
-l = 0                           # Angular momentum
-e = 0                           # Total energy
-time = [i for i in range(100)]  # time array
-larr = [0 for i in range(100)]  # angular momentum array
-earr = [0 for i in range(100)]  # total energy array
-G = 6.67E-11                    # Gravitational constant in SI
+fig = plt.figure(1, figsize=(15, 10))       # Parent window
 
-moredust = True         # If true, generate more dust particles
-muvel = 5E3             # Mean velocity of dust particles
-sigmavel = 0.5E3        # Std. deviation of velocity of dust particles
-mumass = 1E-5           # Mean mass of dust particles
-sigmamass = 1E-7        # Std. deviation of mass of dust particles
-dust = []               # Array to store dust particles
+# Trajectory plot ...
+sunsysax = fig.add_subplot(2, 2, 1, projection='3d')
+sunsysax.title.set_text('Trajectories')
+ext = 500E9
+sunsysax.set_xlim(-ext, ext); sunsysax.set_ylim(-ext, ext); sunsysax.set_zlim(-ext, ext)
 
-fps = 30                    # Target value of frames per second
+# Distribution plot ...
+distribution = fig.add_subplot(2, 2, 2)
+distribution.title.set_text('Dust Distribution')
 
-graph = plt.figure(2)       # plot l and e values
-linel, = plt.plot([], [])   # angular momentum (l)
-linee, = plt.plot([], [])   # total energy (e)
-plt.xlim(0,99)              # timescale plotting range
-plt.ylim(0,1E40)            # l and e plotting range
-def graphplot(frame0):      # call function
-    larr.pop(0)         
-    larr.append(l)          # add new l value
-    earr.pop(0)
-    earr.append(-e*1E7)     # add new e value
-    linel.set_data(time,larr)   # pack l data
-    linee.set_data(time,earr)   # pack e data
-    return linel, linee         # return packed data
+# Angular Momentum and Total Energy plot of mars ...
+marsstats = fig.add_subplot(2, 2, 3, axes_class=AA.Axes)
+marsstats.title.set_text('L and E of Mars')
+marsstats_ = marsstats.twinx()
+pltmarsl = marsstats .plot([], [], 'r-')[0]; pltmarst = marsstats_.plot([], [], 'g-')[0]
+marsstats.axis["left"].set_label('Angular momentum'); marsstats.axis["left"].label.set_color('red')
+marsstats.axis["right"].label.set_visible(True)
+marsstats.axis["right"].set_label('\n\n\n\nKE + PE'); marsstats.axis["right"].label.set_color('green')
 
-plotanim = FuncAnimation(graph, graphplot, interval=1000/fps)       # plot l and e graphs
+# Plot of average Angular Momentum and average Total Energy of dust particles ...
+duststats = fig.add_subplot(2, 2, 4, axes_class=AA.Axes)
+duststats.title.set_text('Average L and E of Dust Particles')
+duststats_ = duststats.twinx()
+pltdustl = duststats .plot([], [], 'r-')[0]; pltdustt = duststats_.plot([], [], 'g-')[0]
+duststats.axis["left"].set_label('Angular momentum'); duststats.axis["left"].label.set_color('red')
+duststats.axis["right"].label.set_visible(True)
+duststats.axis["right"].set_label('\n\n\n\nKE + PE'); duststats.axis["right"].label.set_color('green')
 
-fig = plt.figure(1)                 # Def fig
-ax = plt.axes(projection='3d')      # Def ax
-ax.view_init(0, 0)                  # Initial elevation and azimuth
-iters = 1000                        # Euler-cromer intergrations per datastamp
-disp = 2                            # Full cycles of calculations per render
+plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, wspace=0.4, hspace=0.4)       # Adjust spacings
 
-bodiesplot = plt.plot([], [], [], 'ro'           )[0]       # Sun and Mars
-dustplot   = plt.plot([], [], [], 'b.', alpha=1.0)[0]       # Dust particles
 
-extent = np.linalg.norm(marspos) * 2    #
-ext = -extent,extent                    #
-ax.set_xlim(ext)                        #   Setting plotting range
-ax.set_ylim(ext)                        #
-ax.set_zlim(ext)                        #
+''' Parameters and databases (SI units) ________________'''
 
-''' Dust particle class _____________________________'''
+pos = {                                                 # Position dictionary
+    'sun'  : np.array([0.0, 0.0, 0.0]),
+    'mars' : np.array([0.0, 249.261E9, 0.0])
+    }
 
-class Dust :
+vel = {                                                 # Velocity dictionary
+    'sun'  : np.array([0.0, 0.0, 0.0]),
+    'mars' : np.array([26.50E3, 0.0, 0.0])
+    }
 
-    def __init__(self, pos, vel, mass, trajec, trj):
-        self.pos  = pos         # position
-        self.vel  = vel         # velocity
-        self.mass = mass        # mass
-        self.trajec = trajec    # trajectory
-        self.trj = trj          # plotting object
+mass = {                                                # Mass dictionary
+    'sun'  : 1.989E30,
+    'mars' : 6.39E23
+    }
 
-    def eulercromer(self):
-        sunvec  = sunpos  - self.pos        # vector to sun
-        marsvec = marspos - self.pos        # vector to mars
+interactions = {                                        # Gravitational interactions dictionary
+    'mars' : ['sun']
+}
 
-        sungrav  = (G * sunmass * self.mass * sunvec) / (np.linalg.norm(sunvec) ** 3)       # gravity of sun
-        marsgrav = (G * marsmass * self.mass * marsvec) / (np.linalg.norm(marsvec) ** 3)    # gravity of mars
+sunsys = {                                              # Plotting array dictionary
+    'sunmars'    :  sunsysax.plot([], [], [], 'ro')[0],
+    'marstrajec' : [sunsysax.plot([], [], [], 'g-')[0], [[], [], []]],
+    'dusts'      :  sunsysax.plot([], [], [], 'b.')[0]
+}
 
-        sunacc  = sungrav / self.mass           # acceleration due to sun
-        marsacc = marsgrav / self.mass          # acceleration due to mars
-        solwind = np.array([0.0, 0.0, 0.0])     # acceleration due to solar wind
-        netacc = sunacc + marsacc + solwind     # total acceleration
-        self.vel += ( timestep * netacc )       # update velocity
-        self.pos += ( timestep * self.vel )     # update position
+G = 6.67E-11            # Universal gravitational constant
+C = 3E8                 # Speed of light in vacuum
+time = 0                # Current time (tracking variable)
+timestep = 1500         # Timestep for integration
+iters = 1500            # Number of times integration is done for one datapoint
+num_dust = 0            # Number of dust particles (tracking variable)
+max_dust = 100          # Maximum number of dust particles generated
+muspeed = 5E3           # Mean speed of ejected dust particles
+sigmaspeed = 5E2        # Standard deviation of speed of ejected dust particles
+density = 3000          # Density of dust particles
+reflectivity = 0.25     # Reflectivity of dust particles, value must be in the interval [0, 1]
+history = 200           # Maximum number of datapoints to show in trajectory
+span = history          # Number of datapoints to show in angular momentum and total energy plot
+sizerange = np.array([1E-5, 1E-3])                                      # Minimum and maximum diameter of ejected dust particles 
+massrange = density * 4 * np.pi * (sizerange**3) / 24                   # Mass range of ejected dust particles
+marsTE = [0 for _ in range(span)]; marsl = [0 for _ in range(span)]     # Angular momentum and total energy of mars, plotting database
+dustTE = [0 for _ in range(span)]; dustl = [0 for _ in range(span)]     # Angular momentum and total energy of dust, plotting database
+timeline = [0 for _ in range(span)]                                     # Timestamps, plotting database
+x, y = [], []                                                           # Dust distribution database
 
-    def position(self):
-        return self.pos     # return position
 
-    def velocity(self):
-        return self.vel     # return velocity
+''' Functions __________________________________________'''
 
-    def get_mass(self):
-        return self.mass    # return mass
+# Integration on all particles by Semi-implicit Euler method ...
+def semi_implicit_euler(iters):
+    global pos, vel, time               # Fetch global variables
+    for i in range(iters):              # Do integration repeatedly
+        time += timestep                # Increment time 
+        for body in interactions :      # Select each body
+            radprsracc = 0              # Variable for acceleration due to radiation pressure
+            if body[:4] == 'dust' : radprsracc = pos[body] * (1+reflectivity) * 3.8E26 * ((mass[body]/density)**(2/3)) / ( 2 * C * mass[body] * (np.linalg.norm(pos[body])**3) )    # Calculate acceleration of dust particles due to radiation pressure
+            acceleration = radprsracc + ( G * sum([( mass[elem] / (( np.linalg.norm(pos[elem]-pos[body]) )**3) ) * (pos[elem]-pos[body]) for elem in interactions[body]]) )         # Calculate total acceleration of selected body
+            vel[body] = vel[body] + (timestep * acceleration)       # Update velocity
+            pos[body] = pos[body] + (timestep * vel[body])          # Update position
 
-    def update_trajectory(self) :
-        self.trajec.append([list(self.pos)])    # append postion point
+# Function to create an ejected dust particle ...
+def add_dust(probability, originbody, selfvel, selfmass):
+    if np.random.rand() < probability :                         # Probability of adding dust particle
+        global num_dust, pos, vel, mass, interactions           # Fetch global variables
+        pos[f'dust{num_dust}']  = pos[originbody]               # Add initial position of dust particle to position dictionary
+        vel[f'dust{num_dust}']  = vel[originbody] + selfvel     # Add initial velocity of dust particle to velocity dictionary
+        mass[f'dust{num_dust}'] = selfmass                      # Add mass of dust particle to mass dictionary
+        interactions[f'dust{num_dust}'] = ['sun', 'mars']       # Add list of gravitationally influencing bodies to interactions dictionary
+        hue = 0.05 + 0.9 * (np.log10(selfmass) - np.log10(massrange[0])) / (np.log10(massrange[1]) - np.log10(massrange[0]))                                    # Set color to dust particle's trajectory according to its mass
+        sunsys[f'trajec{num_dust}'] = [sunsysax.plot([], [], [], linestyle='-', linewidth=0.60, color=hsv_to_rgb([hue,1,0.5]), alpha=0.30)[0], [[], [], []]]    # Add to plotting and position array to plotting array dictionary
+        num_dust += 1                                           # Increment number of dust particles
 
-    def get_trajectory(self):
-        self.trj.set_data_3d(np.concatenate(self.trajec).T)     # make trajectory plotting dataset
-        return self.trj                                         # return plotting object
+# Create a random 3D vector with specified magnitude ...
+def initvel(mag):
+    theta = np.random.uniform(0, 2*np.pi)
+    z = np.random.uniform(-1, 1)
+    x = ((1-z**2)**0.5)*np.cos(theta)
+    y = ((1-z**2)**0.5)*np.sin(theta)
+    return mag * np.array([x, y, z])
 
-''' Euler-cromer on Mars due to Sun _________________'''
+# Angular momentum and total energy plot of mars and dust particles ...
+def l_m_plot():
+    timeline.pop(0)                     # Remove last time
+    timeline.append(time)               # Append new time
+    marsTE.pop(0)                       # Remove last total energy of mars
+    marsTE.append(0.5 * mass['mars'] * np.dot(vel['mars'], vel['mars']) - G * mass['sun'] * mass['mars'] / np.linalg.norm(pos['mars']))     # Append new total energy of mars
+    marsl.pop(0)                        # Remove last angular momentum of mars
+    marsl.append(mass['mars'] * np.linalg.norm(np.cross(pos['mars'], vel['mars'])))     # Append new angular momentum of mars
+    if num_dust == 0 : return None      # If there are no dust particles then exit
+    dustl.pop(0)                        # Remove last average angular momentum of dust particles
+    dustl.append(sum([mass[f'dust{i}']*np.linalg.norm(np.cross(pos[f'dust{i}'], vel[f'dust{i}'])) for i in range(num_dust)])/num_dust)      # Append new average angular momentum of dust particles
+    dustTE.pop(0)                       # Remove last average total energy of dust particles
+    dustTE.append(sum([0.5 * mass[f'dust{i}'] * np.dot(vel[f'dust{i}'], vel[f'dust{i}']) - G * mass['sun'] * mass[f'dust{i}'] / np.linalg.norm(pos[f'dust{i}']) for i in range(num_dust)])/num_dust)    # Append new average total energy of dust particles
+    # Set plot ranges ...
+    marsstats .set_xlim(time-span*timestep*iters, time)
+    marsstats .set_ylim(min(marsl), max(marsl))
+    marsstats_.set_ylim(min(marsTE), max(marsTE))
+    duststats .set_xlim(time-span*timestep*iters, time)
+    duststats .set_ylim(min(dustl), max(dustl))
+    duststats_.set_ylim(min(dustTE), max(dustTE))
+    # Pack plotting arrays ...
+    pltmarsl.set_data(timeline, marsl)
+    pltmarst.set_data(timeline, marsTE)
+    pltdustl.set_data(timeline, dustl)
+    pltdustt.set_data(timeline, dustTE)
 
-def sunmars() :
+# Plot distribution of dust particles ...
+def distributionplot():
+    for num in range(num_dust) : 
+        if len(sunsys[f'trajec{num}'][1][0]) > 1 :
+            if (sunsys[f'trajec{num}'][1][0][-1] * sunsys[f'trajec{num}'][1][0][-2]) < 0 :      # When it crosses the xz plane
+                x.append(sunsys[f'trajec{num}'][1][1][-1])                                      # Get x value
+                y.append(sunsys[f'trajec{num}'][1][2][-1])                                      # Get y value
 
-    global marspos, marsvel     # fetch global variables
+    distribution.hexbin(x, y, gridsize = (35,15), extent = (-ext*2, ext*2, -ext/1.5, ext/1.5))  # Plot 2D histogram
 
-    rvec = sunpos - marspos                                                 # vector to sun
-    grav = (G * sunmass * marsmass * rvec) / (np.linalg.norm(rvec) ** 3)    # calculate force
-    acc = grav / marsmass                                                   # calculate acceleration
-    marsvel = marsvel + ( timestep * acc )                                  # update velocity
-    marspos = marspos + ( timestep * marsvel )                              # update position
+# Pack the position arrays and send for plotting ...
+def packsunsys(): 
+    for i in (0, 1, 2) :
+            sunsys['marstrajec'][1][i].append(pos['mars'][i])
+            if len(sunsys['marstrajec'][1][i])>history : del sunsys['marstrajec'][1][i][0]
+            sunsys['marstrajec'][0].set_data_3d(sunsys['marstrajec'][1])
 
-''' Dust generating, data packing and rendering _____'''
+    for num in range(num_dust) : 
+        for i in (0, 1, 2) :
+            sunsys[f'trajec{num}'][1][i].append(pos[f'dust{num}'][i])
+            if len(sunsys[f'trajec{num}'][1][i])>history : del sunsys[f'trajec{num}'][1][i][0]
+            sunsys[f'trajec{num}'][0].set_data_3d(sunsys[f'trajec{num}'][1])
 
-def update(frame):
+    sunsys['sunmars'].set_data_3d( [pos['sun'][i],pos['mars'][i]] for i in (0, 1, 2) )
+    sunsys['dusts']  .set_data_3d( [pos[f'dust{num}'][i] for num in range(num_dust)] for i in (0, 1, 2) )
 
-    global dust, moredust, l, e                 # fetch global variables
+# Draw surface of the torus ...
+def torus():
+    num = 100
+    theta = np.linspace(0, 2.*np.pi, num)
+    phi = np.linspace(0, 2.*np.pi, num)
+    theta, phi = np.meshgrid(theta, phi)
+    cu, ar = 2*249.261E9, 249.261E9
+    xt = (cu + ar*np.cos(theta)) * np.cos(phi)
+    yt = (cu + ar*np.cos(theta)) * np.sin(phi)
+    zt = ar * np.sin(theta)
+    sunsysax.plot_wireframe(xt, yt, zt, rstride=0, cstride=5, alpha=0.1, linewidth=0.5)
 
-    ax.view_init(ax.elev+0.05, ax.azim-0.1)     # rotate view
-    if len(dust)>100 : moredust=False           # stop dust generation if there is too much dust
+# Display function ...
+def disp(f):
+    if num_dust < max_dust : add_dust(0.50, 'mars', initvel(truncnorm.rvs(-muspeed/sigmaspeed, 2*muspeed/sigmaspeed, loc=muspeed, scale=sigmaspeed)), 10 ** truncnorm.rvs(-2, 2, loc = (np.log10(massrange[0]) + np.log10(massrange[1])) / 2, scale = (np.log10(massrange[1]) - np.log10(massrange[0])) / 4))       # tbh idk what i wrote in this line, it basically creates dust particles with 0.5 probability and with a nice truncated normal distribution of mass and initial speed 
+    semi_implicit_euler(iters)      # Do integration
+    packsunsys()                    # Pack arrays, plot bodies and trajectories
+    distributionplot()              # Plot dust particle distribution
+    l_m_plot()                      # Plot angular momentum and total energy
 
-    for j in range(disp):
 
-        if moredust :
-            theta = np.random.uniform(0, 2*np.pi)                                       #
-            z = np.random.uniform(-1, 1)                                                #
-            x = ((1-z**2)**0.5)*np.cos(theta)                                           #   Generate random initial velocity vector for dust particles and half the z component
-            y = ((1-z**2)**0.5)*np.sin(theta)                                           #
-            initvel = np.array([x, y, z/2]) * abs(np.random.normal(muvel, sigmavel))    #
-            dust.append(Dust(marspos, marsvel+initvel, abs(np.random.normal(mumass, sigmamass)), [], plt.plot([], [], [], 'g-', alpha=0.2, linewidth=0.2)[0]))      # create new dust particle
+''' Animate and display ________________________________'''
 
-        for i in range(iters) :
-            sunmars()                                           # euler-cromer on mars
-            for particle in dust : particle.eulercromer()       # euler-cromer on dust particles
-        
-        l = np.linalg.norm(marsmass*np.cross(marspos,marsvel)) + sum([np.linalg.norm(particle.get_mass()*np.cross(particle.position(),particle.velocity())) for particle in dust])      # angular momentum
-        k = 0.5*marsmass*np.linalg.norm(marsvel)**2 + sum([0.5*particle.get_mass()*np.linalg.norm(particle.velocity())**2 for particle in dust])                                        # kinetic energy
-        p = G*marsmass*sunmass/np.linalg.norm(marspos) + sum([G*particle.get_mass()*sunmass/np.linalg.norm(particle.position()) for particle in dust])                                  # potential energy
-        e = k - p                                                                                                                                                                       # total energy
-
-        for particle in dust : particle.update_trajectory()     # update trajectory datastamp
-
-    bodiesplot.set_data_3d(np.stack((sunpos, marspos)).T)                       # pack sun and mars for plotting
-    arr = np.concatenate(list([particle.position()] for particle in dust))      # prepare dust particle positions for plotting
-    dustplot.set_data_3d(arr.T)                                                 # pack dust particle positions
-
-    return [particle.get_trajectory() for particle in dust], dustplot, bodiesplot       # pack and send data for plotting
-
-ani = FuncAnimation(fig, update, interval=1000/fps)     # animation of system
-plt.show()                                              # show final plot
-
-''' ___ Sparsha Ray, MS21256, evac, ver 1.2 dated 17/07/2022, rtr.iiserm ___ '''
+torus()                                                         # Draw the torus
+anim = animation.FuncAnimation(fig, disp, interval=1000/60)     # Animate everything
+plt.show()                                                      # Show animation
